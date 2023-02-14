@@ -1,0 +1,290 @@
+---
+title: "Carbon uptake volgens INBO-advies A.3104 (methode 4b) - met betrouwbaarheidsinterval"
+author: "Anja Leyman, Leen Govaere"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    number_sections: yes
+    fig_caption: yes
+    code_folding: hide
+    toc: TRUE
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+
+---
+
+```{r Rm, eval = FALSE}
+rm(list=ls())
+```
+
+
+```{r Setup, include = FALSE}
+library(knitr)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE, 
+  fig.width = 9,
+  fig.align = TRUE)
+
+library(tidyverse)
+library(RODBC)
+library(here)
+library(DT)
+library(openssl)
+library(kableExtra)
+library(lme4)
+library(plyr)
+
+source(here::here('Scripts/bestandsnamen_invoergegevens.R'))
+source(here::here('Scripts/VBI_Functies.R'))
+source(here::here('Scripts/VBI3_Functies.R'))
+
+scriptNaam <- "GEG_LULUCF_Carbon_BI.Rmd"
+Verzoek <-  "LULUCF_ANB"
+# run <- "run_AL"
+run <- "test_AL"
+```
+
+
+# Vraagstelling
+
+**Adviesvraag vanuit ANB**
+In het advies INBO.A.4103 uit 2020 ontvingen we een ontwerp-berekening voor de C-voorraad op basis van de bosinventarisatie.
+
+https://www.vlaanderen.be/inbo/publicaties/advies-over-de-berekening-van-de-koolstofvoorraad-en-de-evolutie-daarvan-in-de-biomassa-van-vlaamse-bossen
+
+Kan u adviseren hoe we hierop betrouwbaarheidsinterval kunnen berekenen, dus op de toename of afname C/ha/jaar ?
+
+Contactpersoon voor ANB is Leen Govaere (0473/613787),
+
+**Verduidelijking**
+
+Het betrouwbaarheidsinterval heeft betrekking op de onzekerheid door het nemen van een steekproef, maar zegt niks over de onzekerheid op de volumebepaling of de omzetting naar biomassa mbv houtdensiteiten. 
+
+
+# Methodiek C-berekening
+
+**Algemeen**
+
+De carbon uptake factor wordt berekend volgens de stock change methode (eq. 3.2.3. IPCC LULUCF): 
+
+$$\ C{{uptake}} = \frac{\left(\ C2 - C1 \right)}{\left(\ t2 - t1 \right)}$$
+
+
+met 
+
+- C~uptake~ = Carbon uptake factor (tC/ha/jaar)
+- C1: carbon stock at time 1 (tC/ha)
+- C2: carbon stock at time 1 (tC/ha)
+- t1: time 1
+- t2: time 2
+
+en 
+
+$$\ C = \ V *  BEF * WD * \left(\ 1 + R \right) * FC$$
+
+met 
+
+- C = carbon stock (tC/ha)
+- V = stamvolume > 7 cm (m³/ha)
+- BEF = branch/biomass expansion factor: BEF/VEF van Longuetaud: biomass expansion factors afh. van boomsoort, diameter en hoogte
+- WD = wood density: om van volume naar biomassa over te gaan (t/m³), cfr FRL
+- FC = carbon factor: ton C/ton droge biomassa (= 0.5)
+- R = verhouding ondergrondse biomassa tov bovengrondse biomassa, cfr FRL
+
+<br>
+
+**Concreet**
+
+Methode 4b uit het INBO-advies berekent koolstof en biomassa conform de FRL:   
+
+- mbv BEF/VEF van Longuetaud (afh. van boomsoort, diameter en hoogte)
+- factoren cfr. FRL (R, FC, WD)
+
+Aangezien de factoren van Longuetaud niet enkel boomsoort-afhankelijk zijn, maar 
+ook bepaald worden door diameter en hoogte van de boom, wordt bij de berekening vertrokken van individuele boommetingen.
+(zie script `GEG_VolumeBiomassCarbon_aanmaak_analyseset.Rmd`)
+
+<br>
+
+# Referentie
+
+Note technique version 20/11/2017. Estimation du volume et biomasse de différents compartiments de l’arbre. 
+Accompagnement scientifique de l’IPRFW. ULiège - Wallonie environnement SPW.
+
+<br>
+
+
+# Invoer gegevens 
+
+In script `GEG_VolumeBiomassCarbon_aanmaak_analyseset.Rmd` wordt de analyseset aangemaakt op plotniveau:  
+- enkel productieve bosplots 
+- met toevoeging van plots zonder biomassa (stamtal/volume = 0)
+
+Deze analyseset (`tblLULUCF_analyseset_plot`) kan opgehaald worden uit de analysedb of via Rdata.
+
+```{r }
+# save(analyseset_plot, file = here::here("Scripts/Analysedatabank/Rdata/LULUCF_analyseset_plot.Rdata"))
+
+load(here::here("Scripts/Analysedatabank/Rdata/LULUCF_analyseset_plot.Rdata"))
+```
+
+
+# Aanmaak analyseset
+
+```{r KiesPeriode1&2}
+analyseSet <- analyseset_plot %>% 
+   filter(Periode %in% c(1,2))
+```
+
+# Design-based analyse
+
+## C/ha per periode
+
+```{r statistics_per_periode, results = 'hide'}
+colnames(analyseSet)
+variables_for_statistics <- c("Carbon_t_ha")
+
+p1 <- My.WgtParEstimation(analyseSet,VariableName = variables_for_statistics,Periode= 1)
+p2 <- My.WgtParEstimation(analyseSet,VariableName = variables_for_statistics,Periode= 2)
+
+Resultaat <- rbind (p1, p2)
+colnames(Resultaat)
+Resultaat[10:13] <- round(Resultaat[10:13],3)
+Resultaat
+
+vars <- c("periode", "minYear", "maxYear", "minReeks", "maxReeks")
+
+Resultaat <- Resultaat %>%
+    mutate_at(vars, factor)
+
+```
+
+## Toename of afname C/ha/jaar
+
+```{r create_results_wide, results='hide'}
+# van long naar wide
+# dan aftrekken en delen door 16, 14.2,.. ...10
+
+mtimelaps <- 16
+
+Resultaat_wide <- Resultaat %>% 
+  dplyr::select(variabele, periode, wgt.mean) %>% 
+  spread(periode, wgt.mean, sep = "_") %>% 
+  mutate(increase = `periode_2` - `periode_1`,
+         increase_per_yr = round(increase/mtimelaps, 6), # mtimelaps 
+         periode_1 = round(`periode_1`, 2),
+         periode_2 = round(`periode_2`, 2),
+         increase = round(increase, 2)) 
+
+```
+
+
+```{r table_results}
+Resultaat_wide %>% 
+  dplyr::select(-increase) %>% 
+  dplyr::rename("Jaarlijkse toename" = increase_per_yr,
+         # "carbon increase (tC/ha)" = increase,
+         "Periode 1" = periode_1,
+         "Periode 2"= periode_2) %>% 
+  DT::datatable(filter = "none", selection = "none", rownames = FALSE, 
+                options = list(pageLength = 5, dom = 'tip'))
+
+```
+
+## Resultaten wegschrijven
+
+De resultaten worden weggeschreven naar 
+
+- de resultatendatabank 
+- een csv-file: resultCarbonUptake_BI.csv
+
+```{r}
+reeksinfo20 <- ", aantal afgewerkte reeksen VBI3 : 0, berekening obv gegevens 1997 - 2018"
+# VBI1
+minyear1 <- 1997
+maxyear1 <- 1999
+#VBI2
+minyear2 <- 2009
+maxyear2 <- 2018
+```
+
+
+```{r resultatendb_periode1vs2_toestand}
+# Toestand
+My.ResultsToDatabase(dbHandle = dbResultaten_path
+                        , tblName = "tblResultaten"
+                        , results = Resultaat
+                        , scriptName = scriptNaam 
+                        , type="D"
+                        , description = paste0("koolstofgehalte (ton/ha)", reeksinfo20 ) # reeksinfo : de 'nette', 'theoretische' periode itt minYear, maxYear : berekend obv terreinwerk. Is correct zo.
+                       , forestedge = "met randplots"
+                       , datasource = dbAnalyseDataTxt
+                       , datasource_hash = as.character(md5(dbAnalyseData_path))
+                       , stratasource = dbStrataTxt
+                       , stratasource_hash = as.character(md5(dbStrata_path))
+                       , externalsource = dbExterneDataTxt
+                       , externalsource_hash = as.character(md5(dbExterneData_path))
+                       , meetprocessource = dbMeetprocesTxt
+                       , meetprocessource_hash = as.character(md5(dbMeetproces_path))
+                       , request_from = "LULUCF - ANB"
+                       , scriptLocation = "3DendroKwant"
+                       , run_by = run)
+
+
+```
+
+
+```{r resultatendb_evolutie}
+# My.ResultsToDatabase: enkel bij analyseTypoe = M, wordt er weggeschreven naar tblResultaten_Verschil
+# Anders steeds naar tblResultaten_toestand
+
+results_toename <- as.data.frame(Resultaat_wide) %>%
+  dplyr::select(-periode_1, -periode_2, -increase) %>% 
+  mutate(periode = NA
+         , stratumNaam = NA
+         , wgt.mean = increase_per_yr   # as.numeric(as.character(increase_per_yr))
+         , wgt.var = NA
+         , minReeks = factor(1)
+         , maxReeks = factor(10)
+         , nbObservaties = NA   # ?? ev. mean van nbobs per periode?
+         , strata = NA
+         , llci = NA #as.numeric(as.character(llci))
+         , ulci = NA #as.numeric(as.character(ulci))  
+         ) %>%
+  dplyr::select(variabele, periode, everything())
+
+# om weg te schrijven : even minyear1 en minyear2 gelijk zetten, idem voor maxyear
+minyear2 <- minyear1
+maxyear1 <- maxyear2
+Resultaat <- results_toename
+names(Resultaat)
+
+My.ResultsToDatabase(dbHandle = dbResultaten_path
+                        , tblName = "tblResultaten"
+                        , results = Resultaat
+                        , scriptName =scriptNaam
+                        , type="D"
+                       , description = paste0("Toename in koolstof (ton/ha/jr)", reeksinfo20)
+                       , forestedge = "met randplots"
+                       , datasource = dbAnalyseDataTxt
+                       , datasource_hash = as.character(md5(dbAnalyseData_path))
+                       , stratasource = dbStrataTxt
+                       , stratasource_hash = as.character(md5(dbStrata_path))
+                       , externalsource = dbExterneDataTxt
+                       , externalsource_hash = as.character(md5(dbExterneData_path))
+                       , meetprocessource = dbMeetprocesTxt
+                       , meetprocessource_hash = as.character(md5(dbMeetproces_path))
+                       , request_from = "LULUCF - ANB"
+                       , scriptLocation = "3DendroKwant"
+                       , run_by = run
+                      )
+```
+
+```{r export_to_csv_wide, include=FALSE}
+write_excel_csv2(Resultaat_wide,here::here("Output/Tabellen_tmp/resultCarbonUptake.csv"))
+```
+
+
