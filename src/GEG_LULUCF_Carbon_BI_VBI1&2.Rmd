@@ -1,6 +1,6 @@
 ---
 title: "Carbon uptake volgens INBO-advies A.3104 (methode 4b) - met betrouwbaarheidsinterval"
-author: "Anja Leyman, Leen Govaere"
+author: "Anja Leyman, Leen Govaere, Toon Westra"
 date: "`r Sys.Date()`"
 output:
   html_document:
@@ -227,6 +227,7 @@ Als we twee onafhankelijke steekproeven veronderstellen (wat niet het geval is) 
 
 $$\text{SE}_{{C}_2-{C}_1}= \sqrt{\text{SE}_{{C}_2}^2 + \text{SE}_{{C}_1}^2}$$
 Het aantal jaren tussen de inventarisaties berekenen we op twee manieren:
+
 + het verschil tussen het middelste jaar van elke inventarisatie (zoals het vorige advies suggereert): 16 jaar
 + het verschil tussen het gemiddelde jaar van opname van elke inventarisatie (lijkt me correcter): 15,2 jaar
 
@@ -320,7 +321,7 @@ results_unpaired_periode1 <- unpaired %>%
 results_unpaired_periode2 <- unpaired %>%
   My.WgtParEstimation(VariableName =  "Carbon_t_ha", Periode = 2)
 
-periode_jaar <- unpaired %>%
+periode_jaar_unpaired <- unpaired %>%
   group_by(Periode) %>%
   summarise(year_mean = mean(Year),
             year_middle = (max(Year) - min(Year))/2 + min(Year)) %>%
@@ -337,7 +338,7 @@ colnames(results_unpaired) <- str_to_lower(colnames(results_unpaired))
 results_unpaired_wide <- results_unpaired %>%
   select(variabele, periode, nbobservaties, mean = wgt.mean, se, llci, ulci) %>%
   pivot_wider(names_from = "periode", values_from = c("nbobservaties", "mean", "se", "llci", "ulci")) %>%
-  bind_cols(periode_jaar) %>%
+  bind_cols(periode_jaar_unpaired) %>%
   mutate(
     verschil = mean_2 - mean_1,
     verschil_se = sqrt(se_1^2 + se_2^2),
