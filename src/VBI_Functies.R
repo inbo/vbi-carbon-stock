@@ -73,6 +73,8 @@ My.WgtParEstimation<-function(Data,VariableName,Periode=NA,MinReeks=1,MaxReeks=1
           lci<-wgt.mean-1.96*sqrt(wgt.var)/sqrt(V1)
 
           uci<-wgt.mean+1.96*sqrt(wgt.var)/sqrt(V1)
+          
+          se <- sqrt(wgt.var)/sqrt(V1)
 
         }else {
 
@@ -95,6 +97,7 @@ My.WgtParEstimation<-function(Data,VariableName,Periode=NA,MinReeks=1,MaxReeks=1
                             nbObservaties=length(DataStrat$IDPlots),
                             wgt.mean=wgt.mean,
                             wgt.var=wgt.var,
+                            se = se,
                             llci=lci,
                             ulci=uci)
         if (s<=1){
@@ -113,6 +116,7 @@ My.WgtParEstimation<-function(Data,VariableName,Periode=NA,MinReeks=1,MaxReeks=1
       wgt.var <-sum(DataSel$Weight*(Variable-wgt.mean)^2,na.rm=T)/(V1-(V2/V1))
       lci<-wgt.mean-1.96*sqrt(wgt.var)/sqrt(V1)
       uci<-wgt.mean+1.96*sqrt(wgt.var)/sqrt(V1)
+      se <- sqrt(wgt.var)/sqrt(V1)
       outputT<-data.frame(variabele=Var,
                           strata="",
                           stratumNaam="",
@@ -124,6 +128,7 @@ My.WgtParEstimation<-function(Data,VariableName,Periode=NA,MinReeks=1,MaxReeks=1
                           nbObservaties=nrow(DataSel),
                           wgt.mean=wgt.mean,
                           wgt.var=wgt.var,
+                          se = se,
                           llci=lci,
                           ulci=uci)
 

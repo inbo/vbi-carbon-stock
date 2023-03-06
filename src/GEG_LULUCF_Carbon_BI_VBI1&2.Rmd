@@ -11,6 +11,7 @@ output:
     toc_float:
       collapsed: FALSE
       smooth_scroll: FALSE
+bibliography: reference.bib
 
 ---
 
@@ -35,11 +36,14 @@ library(DT)
 library(openssl)
 library(kableExtra)
 library(lme4)
-library(plyr)
+library(Partiallyoverlapping)
+library(DHARMa)
+library(readxl)
+library(tidyr)
+library(broom)
 
-source(here::here('Scripts/bestandsnamen_invoergegevens.R'))
-source(here::here('Scripts/VBI_Functies.R'))
-source(here::here('Scripts/VBI3_Functies.R'))
+source(here::here('src/VBI_Functies.R'))
+source(here::here('src/VBI3_Functies.R'))
 
 scriptNaam <- "GEG_LULUCF_Carbon_BI.Rmd"
 Verzoek <-  "LULUCF_ANB"
@@ -55,9 +59,7 @@ In het advies INBO.A.4103 uit 2020 ontvingen we een ontwerp-berekening voor de C
 
 https://www.vlaanderen.be/inbo/publicaties/advies-over-de-berekening-van-de-koolstofvoorraad-en-de-evolutie-daarvan-in-de-biomassa-van-vlaamse-bossen
 
-Kan u adviseren hoe we hierop betrouwbaarheidsinterval kunnen berekenen, dus op de toename of afname C/ha/jaar ?
-
-Contactpersoon voor ANB is Leen Govaere (0473/613787),
+Hoe kan het betrouwbaarheidsinterval berekend worden op de toename of afname van C/ha/jaar ?
 
 **Verduidelijking**
 
@@ -125,18 +127,45 @@ In script `GEG_VolumeBiomassCarbon_aanmaak_analyseset.Rmd` wordt de analyseset a
 
 Deze analyseset (`tblLULUCF_analyseset_plot`) kan opgehaald worden uit de analysedb of via Rdata.
 
-```{r }
+```{r , warning=FALSE}
 # save(analyseset_plot, file = here::here("Scripts/Analysedatabank/Rdata/LULUCF_analyseset_plot.Rdata"))
 
-load(here::here("Scripts/Analysedatabank/Rdata/LULUCF_analyseset_plot.Rdata"))
+load(here::here("data/LULUCF_analyseset_plot.Rdata"))
+
+gepaardheid <- read_excel("../data/tblRepeatedMeasurement.xlsx")
+
+gepaardheid_1_2 <- gepaardheid %>%
+  filter(timespan == "1_2") %>%
+  select(idplots, rm_dendro) %>%
+  mutate(rm_dendro = as.logical(rm_dendro))
+
+check <- n_distinct(gepaardheid_1_2$idplots) == nrow(gepaardheid_1_2)
+```
+
+
+```{r}
+show_ci <- function(mean, llci, ulci, digits = 2){
+  
+  result <- str_c(round(mean, digits), " [", round(llci, digits), " - ", round(ulci, digits), "]")
+  
+  return(result)
+  
+  }
 ```
 
 
 # Aanmaak analyseset
 
 ```{r KiesPeriode1&2}
-analyseSet <- analyseset_plot %>% 
-   filter(Periode %in% c(1,2))
+analyseset <- analyseset_plot %>% 
+   filter(Periode %in% c(1,2)) %>%
+   select(idplots = IDPlots, Periode, Weight, Year, Reeks, Carbon_t_ha, idgroup) %>%
+  left_join(gepaardheid_1_2, by = "idplots")
+
+duur_periode <- analyseset_plot %>%
+  group_by(Periode) %>%
+  summarise(mean_year = mean(Year)) %>%
+  ungroup()
 ```
 
 # Design-based analyse
@@ -144,22 +173,14 @@ analyseSet <- analyseset_plot %>%
 ## C/ha per periode
 
 ```{r statistics_per_periode, results = 'hide'}
-colnames(analyseSet)
-variables_for_statistics <- c("Carbon_t_ha")
 
-p1 <- My.WgtParEstimation(analyseSet,VariableName = variables_for_statistics,Periode= 1)
-p2 <- My.WgtParEstimation(analyseSet,VariableName = variables_for_statistics,Periode= 2)
+p1 <- My.WgtParEstimation(analyseset, VariableName = "Carbon_t_ha", Periode = 1)
 
-Resultaat <- rbind (p1, p2)
-colnames(Resultaat)
-Resultaat[10:13] <- round(Resultaat[10:13],3)
-Resultaat
+p2 <- My.WgtParEstimation(analyseset, VariableName = "Carbon_t_ha", Periode = 2)
 
-vars <- c("periode", "minYear", "maxYear", "minReeks", "maxReeks")
+result_db <- rbind (p1, p2)
 
-Resultaat <- Resultaat %>%
-    mutate_at(vars, factor)
-
+colnames(result_db) <- str_to_lower(colnames(result_db))
 ```
 
 ## Toename of afname C/ha/jaar
@@ -168,123 +189,594 @@ Resultaat <- Resultaat %>%
 # van long naar wide
 # dan aftrekken en delen door 16, 14.2,.. ...10
 
-mtimelaps <- 16
+n_years_mean <- mean((analyseset %>%
+       filter(Periode == 2))$Year) -
+  mean((analyseset %>%
+       filter(Periode == 1))$Year)
 
-Resultaat_wide <- Resultaat %>% 
-  dplyr::select(variabele, periode, wgt.mean) %>% 
-  spread(periode, wgt.mean, sep = "_") %>% 
-  mutate(increase = `periode_2` - `periode_1`,
-         increase_per_yr = round(increase/mtimelaps, 6), # mtimelaps 
-         periode_1 = round(`periode_1`, 2),
-         periode_2 = round(`periode_2`, 2),
-         increase = round(increase, 2)) 
+periode_jaar <- analyseset %>%
+  group_by(Periode) %>%
+  summarise(year_mean = mean(Year),
+            year_middle = (max(Year) - min(Year))/2 + min(Year)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c("year_mean", "year_middle"), names_to = "type", values_to = "year") %>%
+  pivot_wider(names_from = "Periode", names_prefix = "periode_", values_from = c("year")) %>%
+  mutate(diff_n_years = periode_2 - periode_1)
+
+
+result_db_diff <- result_db %>%
+  select(variabele, periode, mean = wgt.mean, se, llci, ulci) %>%
+  pivot_wider(names_from = "periode", values_from = c("mean", "se", "llci", "ulci")) %>%
+  bind_cols(periode_jaar) %>%
+  mutate(
+    verschil = mean_2 - mean_1,
+    verschil_se = sqrt(se_1^2 + se_2^2),
+    llci = verschil - 1.96 * verschil_se,
+    ulci = verschil + 1.96 * verschil_se,
+    verschil_jaar = verschil/diff_n_years,
+    verschil_jaar_se = verschil_se/diff_n_years,
+    verschil_jaar_llci = llci/diff_n_years,
+    verschil_jaar_ulci = ulci/diff_n_years
+  )
 
 ```
+
+## Betrouwbaarheidsinterval: 2 onafhankelijke steekproeven
+
+Als we twee onafhankelijke steekproeven veronderstellen (wat niet het geval is) kunnen we eeenvoudig de standaard error berekenen op het verschil tussen de gemiddeldes per periode. Omdat we negeren dat een deel van de observaties gepaard zijn, krijgen we hierdoor echter een breder betrouwbaarheidsinterval (lagere precisie).  
+
+$$\text{SE}_{{C}_2-{C}_1}= \sqrt{\text{SE}_{{C}_2}^2 + \text{SE}_{{C}_1}^2}$$
+Het aantal jaren tussen de inventarisaties berekenen we op twee manieren:
++ het verschil tussen het middelste jaar van elke inventarisatie (zoals het vorige advies suggereert): 16 jaar
++ het verschil tussen het gemiddelde jaar van opname van elke inventarisatie (lijkt me correcter): 15,2 jaar
 
 
 ```{r table_results}
-Resultaat_wide %>% 
-  dplyr::select(-increase) %>% 
-  dplyr::rename("Jaarlijkse toename" = increase_per_yr,
-         # "carbon increase (tC/ha)" = increase,
+result_onafh <- result_db_diff %>% 
+  mutate(verschil_jaar = show_ci(verschil_jaar, verschil_jaar_llci, verschil_jaar_ulci),
+        periode_1 = show_ci(mean_1, llci_1, ulci_1),
+        periode_2 = show_ci(mean_2, llci_2, ulci_2),
+        diff_n_years = round(diff_n_years, 2)) %>%
+  select(variabele,
          "Periode 1" = periode_1,
-         "Periode 2"= periode_2) %>% 
-  DT::datatable(filter = "none", selection = "none", rownames = FALSE, 
-                options = list(pageLength = 5, dom = 'tip'))
+         "Periode 2" = periode_2,
+         "Tijdsverschil (jaren)" = diff_n_years,
+         "Jaarlijkse toename" = verschil_jaar) 
+
+result_onafh %>% 
+  datatable(rownames = FALSE,
+            caption = "Schatting jaarlijkse toename in C per ha en 95% betrouwbaarheidsinterval bij een verondetstelling dat beide steekproeven onafhankelijk zijn")
 
 ```
 
-## Resultaten wegschrijven
 
-De resultaten worden weggeschreven naar 
-
-- de resultatendatabank 
-- een csv-file: resultCarbonUptake_BI.csv
+## Betrouwbaarheidsinterval: deels gepaarde metingen
 
 ```{r}
-reeksinfo20 <- ", aantal afgewerkte reeksen VBI3 : 0, berekening obv gegevens 1997 - 2018"
-# VBI1
-minyear1 <- 1997
-maxyear1 <- 1999
-#VBI2
-minyear2 <- 2009
-maxyear2 <- 2018
-```
+analyseset <- analyseset %>%
+  group_by(idplots) %>%
+  mutate(n_periods = n_distinct(Periode)) %>%
+  ungroup() %>%
+  mutate(observation_type = ifelse(is.na(rm_dendro) | n_periods == 1, "not repeated",
+                                   ifelse(rm_dendro, "repeated & paired", "repeated & unpaired")))
 
+check <- analyseset %>%
+  group_by(Periode, observation_type, n_periods) %>%
+  summarise(n = n()) %>%
+  ungroup()
 
-```{r resultatendb_periode1vs2_toestand}
-# Toestand
-My.ResultsToDatabase(dbHandle = dbResultaten_path
-                        , tblName = "tblResultaten"
-                        , results = Resultaat
-                        , scriptName = scriptNaam 
-                        , type="D"
-                        , description = paste0("koolstofgehalte (ton/ha)", reeksinfo20 ) # reeksinfo : de 'nette', 'theoretische' periode itt minYear, maxYear : berekend obv terreinwerk. Is correct zo.
-                       , forestedge = "met randplots"
-                       , datasource = dbAnalyseDataTxt
-                       , datasource_hash = as.character(md5(dbAnalyseData_path))
-                       , stratasource = dbStrataTxt
-                       , stratasource_hash = as.character(md5(dbStrata_path))
-                       , externalsource = dbExterneDataTxt
-                       , externalsource_hash = as.character(md5(dbExterneData_path))
-                       , meetprocessource = dbMeetprocesTxt
-                       , meetprocessource_hash = as.character(md5(dbMeetproces_path))
-                       , request_from = "LULUCF - ANB"
-                       , scriptLocation = "3DendroKwant"
-                       , run_by = run)
+carbon_periodes <- analyseset %>%
+  filter(observation_type %in% c("repeated & paired", "repeated & unpaired")) %>%
+  select(idplots, observation_type, Periode, Carbon_t_ha) %>%
+  pivot_wider(names_from = "Periode", values_from = "Carbon_t_ha", names_prefix = "periode_")
+
+carbon_periodes %>%
+  ggplot(aes(x = periode_1, y = periode_2)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth() +
+  geom_abline(intercept = 0, slope = 1, linetype = 2) +
+  facet_wrap(~observation_type)
 
 
 ```
 
+```{r}
+unpaired <- analyseset %>%
+  filter(observation_type %in% c("not repeated", "repeated & unpaired"))
 
-```{r resultatendb_evolutie}
-# My.ResultsToDatabase: enkel bij analyseTypoe = M, wordt er weggeschreven naar tblResultaten_Verschil
-# Anders steeds naar tblResultaten_toestand
+paired_p1_p2 <- analyseset %>%
+  filter(observation_type == "repeated & paired") %>%
+  select(idplots, Year, Weight, Periode, Carbon_t_ha) %>%
+  pivot_wider(names_from = "Periode", values_from = c("Year", "Weight", "Carbon_t_ha")) %>%
+  mutate(n_years = Year_2 - Year_1,
+         carbon_t_ha_diff_total = Carbon_t_ha_2 - Carbon_t_ha_1,
+         carbon_t_ha_diff_year = carbon_t_ha_diff_total/n_years)
 
-results_toename <- as.data.frame(Resultaat_wide) %>%
-  dplyr::select(-periode_1, -periode_2, -increase) %>% 
-  mutate(periode = NA
-         , stratumNaam = NA
-         , wgt.mean = increase_per_yr   # as.numeric(as.character(increase_per_yr))
-         , wgt.var = NA
-         , minReeks = factor(1)
-         , maxReeks = factor(10)
-         , nbObservaties = NA   # ?? ev. mean van nbobs per periode?
-         , strata = NA
-         , llci = NA #as.numeric(as.character(llci))
-         , ulci = NA #as.numeric(as.character(ulci))  
-         ) %>%
-  dplyr::select(variabele, periode, everything())
-
-# om weg te schrijven : even minyear1 en minyear2 gelijk zetten, idem voor maxyear
-minyear2 <- minyear1
-maxyear1 <- maxyear2
-Resultaat <- results_toename
-names(Resultaat)
-
-My.ResultsToDatabase(dbHandle = dbResultaten_path
-                        , tblName = "tblResultaten"
-                        , results = Resultaat
-                        , scriptName =scriptNaam
-                        , type="D"
-                       , description = paste0("Toename in koolstof (ton/ha/jr)", reeksinfo20)
-                       , forestedge = "met randplots"
-                       , datasource = dbAnalyseDataTxt
-                       , datasource_hash = as.character(md5(dbAnalyseData_path))
-                       , stratasource = dbStrataTxt
-                       , stratasource_hash = as.character(md5(dbStrata_path))
-                       , externalsource = dbExterneDataTxt
-                       , externalsource_hash = as.character(md5(dbExterneData_path))
-                       , meetprocessource = dbMeetprocesTxt
-                       , meetprocessource_hash = as.character(md5(dbMeetproces_path))
-                       , request_from = "LULUCF - ANB"
-                       , scriptLocation = "3DendroKwant"
-                       , run_by = run
-                      )
+mean_year_paired <- mean(paired_p1_p2$n_years)
+mean_carbon_paired <- mean(paired_p1_p2$carbon_t_ha_diff_year)
 ```
 
-```{r export_to_csv_wide, include=FALSE}
-write_excel_csv2(Resultaat_wide,here::here("Output/Tabellen_tmp/resultCarbonUptake.csv"))
+
+### Aparte schatting gepaarde en niet-gepaarde plots
+
++ Voor de gepaarde metingen kunnen we op plotniveau de toename in C per ha per jaar bepalen. Dit is correcter gezien de periode tussen de herhaalde metingen varieert van plot tot plot. 
+
+```{r}
+results_paired <- paired_p1_p2 %>%
+  mutate(Weight = Weight_2,
+         Year = Year_2,
+         Reeks = 1) %>%
+  My.WgtParEstimation(VariableName =  c("carbon_t_ha_diff_year", "carbon_t_ha_diff_total"))
+
 ```
 
++ voor de niet-gepaarde metingen berekenen we het verschil in gemiddelde houtvoorraad periode en delen we die door het verschil in gemiddelde jaar waarin de opname is gebeurd.
+
+
+```{r}
+results_unpaired_periode1 <- unpaired %>%
+  My.WgtParEstimation(VariableName =  "Carbon_t_ha", Periode = 1)
+
+results_unpaired_periode2 <- unpaired %>%
+  My.WgtParEstimation(VariableName =  "Carbon_t_ha", Periode = 2)
+
+periode_jaar <- unpaired %>%
+  group_by(Periode) %>%
+  summarise(year_mean = mean(Year),
+            year_middle = (max(Year) - min(Year))/2 + min(Year)) %>%
+  ungroup() %>%
+  pivot_longer(cols = c("year_mean", "year_middle"), names_to = "type", values_to = "year") %>%
+  pivot_wider(names_from = "Periode", names_prefix = "periode_", values_from = c("year")) %>%
+  mutate(diff_n_years = periode_2 - periode_1)
+
+results_unpaired <- results_unpaired_periode1 %>%
+  bind_rows(results_unpaired_periode2) 
+
+colnames(results_unpaired) <- str_to_lower(colnames(results_unpaired))
+
+results_unpaired_wide <- results_unpaired %>%
+  select(variabele, periode, nbobservaties, mean = wgt.mean, se, llci, ulci) %>%
+  pivot_wider(names_from = "periode", values_from = c("nbobservaties", "mean", "se", "llci", "ulci")) %>%
+  bind_cols(periode_jaar) %>%
+  mutate(
+    verschil = mean_2 - mean_1,
+    verschil_se = sqrt(se_1^2 + se_2^2),
+    llci = verschil - 1.96 * verschil_se,
+    ulci = verschil + 1.96 * verschil_se,
+    verschil_jaar = verschil/diff_n_years,
+    verschil_jaar_se = verschil_se/diff_n_years,
+    verschil_jaar_llci = llci/diff_n_years,
+    verschil_jaar_ulci = ulci/diff_n_years,
+    variabele = "carbon_t_ha_diff_year"
+  )
+```
+
+Dit geeft volgende resultaten:
+
+```{r}
+results_paired_summary <- results_paired %>%
+  mutate(observation_type = "gepaard",
+         verschil_jaar = str_c(round(wgt.mean, 2), " [", round(llci, 2), " - ", round(ulci, 2), "]")) %>%
+  select(variabele, observation_type,  "Jaarlijkse toename" = verschil_jaar) 
+  
+results_unpaired_summary <- results_unpaired_wide %>%
+  mutate(observation_type = "ongepaard",
+         diff_n_years = round(diff_n_years, 2),
+         verschil_jaar = str_c(round(verschil_jaar, 2), " [", round(verschil_jaar_llci, 2), " - ", round(verschil_jaar_ulci, 2), "]")) %>%
+  select(variabele, observation_type, "Tijdsverschil (jaren)" = diff_n_years,  "Jaarlijkse toename" = verschil_jaar) 
+
+results_paired_summary %>%
+  bind_rows(results_unpaired_summary) %>%
+  datatable(rownames = FALSE)
+
+
+
+
+```
+
+Vervolgens kunnen we gemiddelde nemen van de jaarlijkse toename voor de gepaarde en ongepaarde plots, gewogen volgens de som van de plotgewichten. 
+
+De standard error op dit gewogen gemiddelde berekenen we las volgt:
+
+$$\text{SE}_{{C}_2-C_1}= \sqrt{w_{gepaard}^2\text{SE}_{({C}_2-C_1)_{gepaard}}^2 + w_{ongepaard}^2\text{SE}_{({C}_2-C_1)_{ongepaard}}^2}$$
+
+
+```{r}
+n_paired <- sum(paired_p1_p2$Weight_2, paired_p1_p2$Weight_1) 
+
+n_unpaired <- sum(unpaired$Weight)
+
+# n_paired <- nrow(paired_p1_p2) * 2
+# 
+# n_unpaired <- nrow(unpaired)
+
+weight_paired <- n_paired / (n_paired + n_unpaired)
+
+weight_unpaired <- n_unpaired / (n_paired + n_unpaired)
+
+results_unpaired_wgt <- results_unpaired_wide %>%
+  select(variabele, verschil_jaar_unpaired = verschil_jaar, verschil_jaar_unpaired_se = verschil_jaar_se, diff_n_years) %>%
+  mutate(weight_unpaired = weight_unpaired)
+
+results_paired_wgt <- results_paired %>%
+  select(variabele, verschil_jaar_paired = wgt.mean, verschil_jaar_paired_se = se) %>%
+  mutate(weight_paired = weight_paired) %>%
+  filter(variabele == "carbon_t_ha_diff_year")
+
+results_wgt <- results_unpaired_wgt %>%
+  left_join(results_paired_wgt, by = "variabele") %>%
+  mutate(verschil_jaar_wgt = verschil_jaar_unpaired * weight_unpaired + verschil_jaar_paired * weight_paired,
+         verschil_jaar_wgt_se = sqrt((verschil_jaar_unpaired_se * weight_unpaired)^2 + (verschil_jaar_paired_se * weight_paired)^2),
+         verschil_jaar_wgt_llci = verschil_jaar_wgt - 1.96 * verschil_jaar_wgt_se,
+         verschil_jaar_wgt_ulci = verschil_jaar_wgt + 1.96 * verschil_jaar_wgt_se)
+
+results_wgt <- results_wgt %>% 
+  mutate(verschil_jaar_wgt = show_ci(verschil_jaar_wgt, verschil_jaar_wgt_llci, verschil_jaar_wgt_ulci),
+        diff_n_years = round(diff_n_years, 2)) %>%
+  select(variabele,
+         "Tijdsverschil (jaren)" = diff_n_years,
+         "Jaarlijkse toename" = verschil_jaar_wgt) 
+
+results_wgt %>% 
+  datatable(rownames = FALSE)
+```
+
+### Betrouwbaarheidsinterval afleiden uit aangepaste T-test voor deels overlappende steekproef
+
+Voor het betrouwbaarheidsinterval kunnen we ons ook baseren op de aangepaste T-test voor een deels overlappende steekproef [@Derrick2017]. Ze stellen een test-statistiek $T_{new2}$ voor met $n_1$ en $n_2$ de groottes van de steekproeven, $S_1^2$ en $S_2^2$ de steekproefvarianties van de steekproeven, $n_c$ het aantal gepaarde observaties en $r$ de correlatie tussen de geapaarde observaties:    
+
+$$T_{new2}=\frac{\bar{X_1} - \bar{X_2}}{\sqrt{\frac{S_1^2}{n_1}+\frac{S_2^2}{n_2}-2r\frac{S_1S_2n_c}{n_1n_2}}}$$
+
+De noemer van de test-statistiek $T_{new2}$ komt overeen met de standaardfout en kan gebruikt worden om het betrouwbaarheisdsinterval af te leiden. 
+
+De functie Partover.test van het R-package Partiallyoverlapping maakt het mogelijk om de test-statistiek te berekenen en het betrouwbaarheidsinterval op het geschatte verschil. Maar, de functie laat het niet toe om gewichten te gebruiken. Onderstaande functies houden wel rekening met de gewichten.
+
+
+```{r}
+
+wgt.var <- function(x, wgt) {
+  
+  v1 <- sum(wgt)
+  v2 <- sum(wgt ^2)
+  
+  wgt.mean <- sum(wgt * x) / sum(wgt)
+  
+  wgt_var <- sum(wgt * (x - wgt.mean) ^ 2) / (v1 - v2 / v1)
+  
+  return(wgt_var)
+  
+}
+
+wgt.mean_diff_pos <- function(unpaired_1, unpaired_2, paired_1, paired_2,
+                              wgt_unpaired_1, wgt_unpaired_2, wgt_paired_1, wgt_paired_2) {
+  
+  x_1 <- c(unpaired_1, paired_1)
+  x_2 <- c(unpaired_2, paired_2)
+  wgt_1 <- c(wgt_unpaired_1, wgt_paired_1)
+  wgt_2 <- c(wgt_unpaired_2, wgt_paired_2)
+  
+  wgt.mean_1 <- sum(x_1 * wgt_1) / sum(wgt_1)
+  wgt.mean_2 <- sum(x_2 * wgt_2) / sum(wgt_2)
+  
+  wgt.var_1 <- wgt.var(x_1, wgt_1)
+  wgt.var_2 <- wgt.var(x_2, wgt_2)
+  
+  wgt_paired <- pmin(wgt_paired_1, wgt_paired_2)
+  
+  wgt.mean_paired_1 <- sum(paired_1 * wgt_paired) / sum(wgt_paired)
+  wgt.mean_paired_2 <- sum(paired_2 * wgt_paired) / sum(wgt_paired)
+  
+  wgt.var_paired_1 <- wgt.var(paired_1, wgt_paired)
+  wgt.var_paired_2 <- wgt.var(paired_2, wgt_paired)
+  
+  n_paired <- sum(wgt_paired)
+  n_1 <- sum(wgt_1)
+  n_2 <- sum(wgt_2)
+  
+  wgt.cor <- sum(wgt_paired * (paired_1 - wgt.mean_paired_1) * (paired_2 - wgt.mean_paired_2)) / (n_paired - 1) / sqrt(wgt.var_paired_1) / sqrt(wgt.var_paired_2)
+  
+  wgt.mean_diff <- wgt.mean_1 - wgt.mean_2
+  
+  wgt.mean_diff_se <- sqrt(wgt.var_1/n_1 + wgt.var_2/n_2 - 2 * wgt.cor * (sqrt(wgt.var_1) * sqrt(wgt.var_2) * n_paired / n_1 / n_2))
+  
+  wgt.mean_diff_lcl = wgt.mean_diff - 1.96 * wgt.mean_diff_se
+  wgt.mean_diff_ucl = wgt.mean_diff + 1.96 * wgt.mean_diff_se
+  
+  result <- list(wgt.mean_diff = wgt.mean_diff,
+                 wgt.mean_diff_se = wgt.mean_diff_se,
+                 wgt.mean_diff_lcl = wgt.mean_diff_lcl,
+                 wgt.mean_diff_ucl = wgt.mean_diff_ucl)
+  
+  return(result)
+  
+}
+
+
+```
+
+
+```{r}
+
+unpaired_p1 <- unpaired %>%
+  filter(Periode == 1)
+
+unpaired_p2 <- unpaired %>%
+  filter(Periode == 2)
+
+# controleer of de functie Partover.test dezelfde uitkomst geeft dan de eigen functie 'wgt.mean_diff_pos', in geval dat alle gewichten 1 zijn
+
+check_no_weight_1 <- Partover.test(x1 = unpaired_p2$Carbon_t_ha,
+              x2 = unpaired_p1$Carbon_t_ha,
+              x3 = paired_p1_p2$Carbon_t_ha_2,
+              x4 = paired_p1_p2$Carbon_t_ha_1,
+              conf.level = 0.95)
+
+check_no_weight_2 <- wgt.mean_diff_pos(unpaired_1 = unpaired_p2$Carbon_t_ha,
+                                       unpaired_2 = unpaired_p1$Carbon_t_ha,
+                                       paired_1 = paired_p1_p2$Carbon_t_ha_2,
+                                       paired_2 = paired_p1_p2$Carbon_t_ha_1,
+                                       wgt_unpaired_1 = rep(1, length(unpaired_p2$Carbon_t_ha)),
+                                       wgt_unpaired_2 = rep(1, length(unpaired_p1$Carbon_t_ha)),
+                                       wgt_paired_1 = rep(1, length(paired_p1_p2$Carbon_t_ha_2)),
+                                       wgt_paired_2 = rep(1, length(paired_p1_p2$Carbon_t_ha_1)))
+
+check_weight <- wgt.mean_diff_pos(unpaired_1 = unpaired_p2$Carbon_t_ha,
+                                       unpaired_2 = unpaired_p1$Carbon_t_ha,
+                                       paired_1 = paired_p1_p2$Carbon_t_ha_2,
+                                       paired_2 = paired_p1_p2$Carbon_t_ha_1,
+                                       wgt_unpaired_1 = unpaired_p2$Weight,
+                                       wgt_unpaired_2 = unpaired_p1$Weight,
+                                       wgt_paired_1 = paired_p1_p2$Weight_2,
+                                       wgt_paired_2 = paired_p1_p2$Weight_1)
+
+check <- tibble(function_used = c("Partover.test", "wgt.mean_diff_pos", "wgt.mean_diff_pos"),
+                weighted = c("no", "no" , "yes"),
+                estimate = c(check_no_weight_1$estimate, check_no_weight_2$wgt.mean_diff, check_weight$wgt.mean_diff),
+                ci = c(str_c(check_no_weight_1$conf.int, collapse =  " "), 
+                       str_c(check_no_weight_2$wgt.mean_diff_lcl, " ", check_no_weight_2$wgt.mean_diff_ucl),
+                       str_c(check_weight$wgt.mean_diff_lcl, " ", check_weight$wgt.mean_diff_ucl)))
+
+
+```
+
+In onderstaande tabelzien we dat in het geval we geen gewichten gebruiken, de functie `Partover.test` quasi dezelfde uitkomst geeft als de functie wgt.mean_diff_pos. We zien ook het geschatte verschil kleiner is als we wel gewichten gebruiken. 
+
+
+```{r}
+check %>%
+  datatable(rownames = FALSE,
+            caption = "Vergelijking betrouwbaarheidsinterval op basis van de functie Partover.test en de functie wgt.mean_diff_pos")
+```
+
+Om de verschil in C per jaar te bepalen moeten we bij deze methode opnieuw gebruik maken van de tijdsperiode tussen beide inventarisaties. Voor de gepaarde observaties is de tijdsperiode verschillend per plot en is het gebruik van eenzelfde tijdsperiode voor alle plots minder nauwkeurig.   
+
+
+
+```{r}
+result_tnew2 <- tibble(variabele = "carbon_t_ha_diff_year",
+                       estimate = check_weight$wgt.mean_diff,
+                       lcl = check_weight$wgt.mean_diff_lcl,
+                       ucl = check_weight$wgt.mean_diff_ucl) %>%
+   bind_cols(periode_jaar) %>%
+  mutate(verschil_jaar = estimate/diff_n_years,
+         verschil_jaar_lcl = lcl/diff_n_years,
+         verschil_jaar_ucl = ucl/diff_n_years
+         )
+  
+result_tnew2 <- result_tnew2 %>% 
+  mutate(verschil_jaar = show_ci(verschil_jaar, verschil_jaar_lcl, verschil_jaar_ucl),
+        diff_n_years = round(diff_n_years, 2)) %>%
+  select(variabele,
+         "Tijdsverschil (jaren)" = diff_n_years,
+         "Jaarlijkse toename" = verschil_jaar)
+
+result_tnew2 %>% 
+  datatable(rownames = FALSE,
+            caption = "Resultaten gebaseerd op Tnew2")
+  
+```
+
+
+# Mixed models
+
+
+
+```{r}
+analyseset <- analyseset %>%
+  mutate(fPeriode = factor(Periode),
+         Year_scaled = Year - min(Year))
+
+#check gebruik van gewichten
+
+model_mean_weight <- lm(
+  formula = Carbon_t_ha ~ 1,
+  data = analyseset,
+  weights = Weight)
+
+model_mean_noweight <- lm(
+  formula = Carbon_t_ha ~ 1,
+  data = analyseset)
+
+mean <- mean(analyseset$Carbon_t_ha)
+wgt.mean <- sum(analyseset$Weight * analyseset$Carbon_t_ha) / sum(analyseset$Weight)
+
+model_mean_intercept <- as.numeric(model_mean_noweight$coefficients)
+model_wgt.mean_intercept <- as.numeric(model_mean_weight$coefficients["(Intercept)"])
+
+check_mean <- round(mean - model_mean_intercept, 7)
+check_wgt.mean <- round(wgt.mean - model_wgt.mean_intercept, 7)
+
+model_periode_weight <- lm(
+  formula = Carbon_t_ha ~ fPeriode,
+  data = analyseset,
+  weights = Weight)
+
+model_periode_noweight <- lm(
+  formula = Carbon_t_ha ~ fPeriode,
+  data = analyseset)
+
+mixmodel_periode_weight <- lmer(
+  formula = Carbon_t_ha ~ fPeriode + (1|fPeriode),
+  data = analyseset,
+  weights = Weight)
+
+mixmodel_periode_noweight <- lmer(
+  formula = Carbon_t_ha ~ fPeriode + (1|fPeriode),
+  data = analyseset)
+
+mean_periode <- analyseset %>%
+  group_by(Periode) %>%
+  summarise(mean = mean(Carbon_t_ha),
+            wgt.mean = sum(Carbon_t_ha * Weight) / sum(Weight)) %>%
+  ungroup()
+
+model_periode_weight_coeff <- cumsum(as.numeric(model_periode_weight$coefficients))
+model_periode_noweight_coeff <- cumsum(as.numeric(model_periode_noweight$coefficients))
+mixmodel_periode_weight_coeff <- (summary(mixmodel_periode_weight))$coefficients[,"Estimate"] %>%
+  as.numeric() %>%
+  cumsum()
+mixmodel_periode_noweight_coeff <- (summary(mixmodel_periode_noweight))$coefficients[,"Estimate"] %>%
+  as.numeric() %>%
+  cumsum()
+
+mean_periode_compare <- mean_periode %>%
+  mutate(mean_lm = model_periode_noweight_coeff,
+         wgt.mean_lm = model_periode_weight_coeff,
+         mean_lmer = mixmodel_periode_weight_coeff,
+         wgt.mean_lmer = mixmodel_periode_noweight_coeff)
+
+#gebruik van 'weight' in lm en lmer lijkt OK op eerste zicht
+
+```
+
+
+## Jaar als continue variabele
+
+```{r}
+mixedmodel_year <- lmer(
+  formula = Carbon_t_ha ~ Year_scaled + (1 | idgroup) + (1 | Reeks),
+  data = analyseset,
+  weights = Weight)
+
+```
+
+```{r}
+
+mixedmodel_year_summary <-  summary(mixedmodel_year)
+
+mixedmodel_year_summary
+```
+
+Onderstaande grafiek toont een patroon in de residuen. Het model overschat carbon_t_ha meer en meer naarmate de gefitte waarde voor carbon_t_ha hoger wordt.
+
+```{r}
+plot(mixedmodel_year)
+```
+
+```{r}
+result_mm_year <- data.frame(carbon_t_ha_diff_years = mixedmodel_year_summary$coefficients["Year_scaled","Estimate"],
+                             carbon_t_ha_diff_years_se = mixedmodel_year_summary$coefficients["Year_scaled","Std. Error"]) %>%
+  mutate(carbon_t_ha_diff_years_lcl = carbon_t_ha_diff_years - 1.96 * carbon_t_ha_diff_years_se,
+         carbon_t_ha_diff_years_ucl = carbon_t_ha_diff_years + 1.96 * carbon_t_ha_diff_years_se,
+         model_type = "Jaar als continue variabele")
+```
+
+
+
+
+
+## Periode als verklarende variabele
+
+```{r}
+mixedmodel_periode <- lmer(
+  formula = Carbon_t_ha ~ fPeriode + (1 | idgroup) + (1 | Reeks),
+  data = analyseset,
+  weights = Weight)
+
+```
+
+```{r}
+
+mixedmodel_periode_summary <-  summary(mixedmodel_periode)
+
+mixedmodel_periode_summary
+```
+
+Onderstaande grafiek toont een patroon in de residuen. Het model overschat carbon_t_ha meer en meer naarmate de gefitte waarde voor carbon_t_ha hoger wordt.
+
+```{r}
+plot(mixedmodel_periode)
+```
+```{r}
+result_mm_periode <- data.frame(carbon_t_ha_diff = mixedmodel_periode_summary$coefficients["fPeriode2","Estimate"],
+                             carbon_t_ha_diff_se = mixedmodel_periode_summary$coefficients["fPeriode2","Std. Error"]) %>%
+  bind_cols(periode_jaar) %>%
+  mutate(carbon_t_ha_diff_years = carbon_t_ha_diff / diff_n_years,
+         carbon_t_ha_diff_years_se = carbon_t_ha_diff_se / diff_n_years,
+         carbon_t_ha_diff_years_lcl = carbon_t_ha_diff_years - 1.96 * carbon_t_ha_diff_years_se,
+         carbon_t_ha_diff_years_ucl = carbon_t_ha_diff_years + 1.96 * carbon_t_ha_diff_years_se,
+         model_type = "Periode als factor")
+```
+
+
+
+```{r}
+result_mm <- result_mm_periode %>%
+  bind_rows(result_mm_year) %>%
+  mutate(variabele = "carbon_t_ha_diff_year",
+    verschil_jaar = show_ci(carbon_t_ha_diff_years, carbon_t_ha_diff_years_lcl, carbon_t_ha_diff_years_ucl),
+        diff_n_years = round(diff_n_years, 2)) %>%
+  select(model_type,
+         variabele ,
+         "Tijdsverschil (jaren)" = diff_n_years,
+         "Jaarlijkse toename" = verschil_jaar) 
+
+result_mm %>% 
+  datatable(rownames = FALSE,
+            caption = "Schatting jaarlijkse toename in C per ha en 95% betrouwbaarheidsinterval op basis van mixed model")
+```
+
+# Vergelijking alle methodes
+
+```{r}
+overzicht <- bind_rows(
+  result_onafh %>%
+    mutate(modeltype = "Design based",
+           methode = "enkel onegepaard"),
+  results_wgt %>%
+    mutate(modeltype = "Design based",
+           methode = "aparte schatting gepaard en ongepaard"),
+  result_tnew2 %>%
+    mutate(modeltype = "Design based",
+           methode = "tnew2"),
+  result_mm %>%
+    mutate(modeltype = "Mixed model") %>%
+    rename(methode = model_type)
+) %>%
+  select(modeltype, methode, variabele, "Tijdsverschil (jaren)", "Jaarlijkse toename")
+
+datatable(overzicht,
+          rownames = FALSE)
+```
+
+
+
+# Verdere dataverkenning
+
+
+```{r}
+analyseset %>%
+  ggplot(aes(x = fPeriode, y = Carbon_t_ha, colour = observation_type, shape = observation_type)) +
+  stat_summary(fun.data = "mean_cl_boot", size = 0.5,  alpha = 0.5) +
+  facet_wrap(~Reeks)
+```
+
+```{r}
+analyseset %>%
+  ggplot(aes(x = observation_type, fill = fPeriode)) +
+  geom_bar(position = "dodge") +
+  facet_wrap(~Reeks) +
+  coord_flip()
+```
+```
 
