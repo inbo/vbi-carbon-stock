@@ -580,12 +580,13 @@ result_tnew2 %>%
 
 # Mixed models
 
-
+## Gebruik van gewichten
 
 ```{r}
 analyseset <- analyseset %>%
   mutate(fPeriode = factor(Periode),
-         Year_scaled = Year - min(Year))
+         Year_scaled = Year - min(Year),
+         fReeks = factor(Reeks))
 
 #check gebruik van gewichten
 
@@ -650,31 +651,131 @@ mean_periode_compare <- mean_periode %>%
 
 ```
 
+## Dataverkenning: impact van design
 
-## Jaar als continue variabele
+
+```{r, fig.cap = "Invloed van observatie type en de reeks (strook van meetpunten die in bepaald jaar afgehandeld wordt) op de gemiddelde C per ha voor de beide inventarisaties"}
+analyseset %>%
+  ggplot(aes(x = fPeriode, y = Carbon_t_ha, colour = observation_type, shape = observation_type)) +
+  stat_summary(fun.data = "mean_cl_boot", size = 0.5,  alpha = 0.5) +
+  facet_wrap(~Reeks)
+```
+
++ Verschil in gemiddeldes tussen observatie typen
++ Verschil in gemiddeldes tussen de reeksen
++ toename in gemiddeldes voor alle observatie types
+
+```{r, fig.cap= "Aantal observaties per observatie type en per reeks"}
+analyseset %>%
+  ggplot(aes(x = observation_type, fill = fPeriode)) +
+  geom_bar(position = "dodge") +
+  facet_wrap(~Reeks) +
+  coord_flip()
+```
+
++ Duidelijk groter aandeel gepaarde metingen in eerste 4 reeksen
+
+
+## Model met jaar als continue variabele
+
+Dit model geeft de gemiddelde toename per jaar. 
+Met dit model kunnen ook observaties van VBI3 eenvoudig meegenomen worden (ook als VBI3 nog niet volledig is afgerond)
+
+We bekijken twee varianten:
+
++ random effect voor gepaarde plots (gepaarde plots krijgen eenzelfde id)
++ random effect voor herhaalde plots (herhaalde plots krijgen eenzelfde id)
+
+Daarnaast evalueren we een bijkomend random effect voor:
+
++ observatie type
++ reeks
+
 
 ```{r}
-mixedmodel_year <- lmer(
-  formula = Carbon_t_ha ~ Year_scaled + (1 | idgroup) + (1 | Reeks),
+mixedmodel_year_reeks <- lmer(
+  formula = Carbon_t_ha ~ Year_scaled + (1 | idgroup) + (1 | fReeks),
   data = analyseset,
   weights = Weight)
 
+mixedmodel_year <- lmer(
+  formula = Carbon_t_ha ~ Year_scaled + (1 | idgroup),
+  data = analyseset,
+  weights = Weight)
+
+mixedmodel_year_obs <- lmer(
+  formula = Carbon_t_ha ~ Year_scaled + (1 | idgroup) + (1 | observation_type) + (1 | fReeks),
+  data = analyseset,
+  weights = Weight)
+
+mixedmodel_year_2 <- lmer(
+  formula = Carbon_t_ha ~ Year_scaled + (1 | idplots) + (1 | observation_type),
+  data = analyseset,
+  weights = Weight)
+
+model_residuals <- bind_rows(
+  analyseset %>%
+    mutate(model = "mm_year_paired_reeks",
+           residuals = residuals(mixedmodel_year_reeks),
+           fitted = fitted(mixedmodel_year_reeks)),
+  analyseset %>%
+    mutate(model = "mm_year_paired",
+           residuals = residuals(mixedmodel_year),
+           fitted = fitted(mixedmodel_year)),
+  analyseset %>%
+    mutate(model = "mm_year_repetaed_obstype",
+           residuals = residuals(mixedmodel_year_2),
+           fitted = fitted(mixedmodel_year_2)),
+  analyseset %>%
+    mutate(model = "mm_year_paired_obstype",
+           residuals = residuals(mixedmodel_year_obs),
+           fitted = fitted(mixedmodel_year_obs))
+)
+
+```
+
+
+Onderstaande grafiek toont een patroon in de residuen. 
+
++ Het model overschat carbon_t_ha meer en meer naarmate de gefitte waarde voor carbon_t_ha hoger wordt.
++ Het patroon is sterker als we herhaalde metingen als random effect nemen
++ Weinig impact van random effect voor observatietype en reeks
+
+```{r}
+model_residuals %>%
+  ggplot(aes(x = fitted, y = residuals)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  geom_hline(yintercept = 0, linetype = 2) +
+  facet_grid(observation_type ~ model)
 ```
 
 ```{r}
 
-mixedmodel_year_summary <-  summary(mixedmodel_year)
-
-mixedmodel_year_summary
-```
-
-Onderstaande grafiek toont een patroon in de residuen. Het model overschat carbon_t_ha meer en meer naarmate de gefitte waarde voor carbon_t_ha hoger wordt.
-
-```{r}
-plot(mixedmodel_year)
+model_residuals %>%
+  ggplot(aes(x = observation_type, y = residuals)) +
+  geom_boxplot() +
+  facet_wrap(~model, ncol = 1) +
+  coord_flip()
 ```
 
 ```{r}
+model_residuals %>%
+  ggplot(aes(x = fPeriode, y = residuals)) +
+  geom_boxplot() +
+  facet_wrap(~model, ncol = 4)
+```
+```{r}
+model_residuals %>%
+  ggplot(aes(x = fReeks, y = residuals)) +
+  geom_boxplot() +
+  facet_wrap(~model, ncol = 4)
+```
+
+```{r}
+
+mixedmodel_year_summary <- summary(mixedmodel_year_obs)
+
 result_mm_year <- data.frame(carbon_t_ha_diff_years = mixedmodel_year_summary$coefficients["Year_scaled","Estimate"],
                              carbon_t_ha_diff_years_se = mixedmodel_year_summary$coefficients["Year_scaled","Std. Error"]) %>%
   mutate(carbon_t_ha_diff_years_lcl = carbon_t_ha_diff_years - 1.96 * carbon_t_ha_diff_years_se,
@@ -682,11 +783,16 @@ result_mm_year <- data.frame(carbon_t_ha_diff_years = mixedmodel_year_summary$co
          model_type = "Jaar als continue variabele")
 ```
 
+```{r}
+summary(mixedmodel_year_obs)
+```
 
 
 
 
 ## Periode als verklarende variabele
+
+We kunnen ook de periode (VBI1 en VBI2) in model opnemen om het verschil tussen de periodes te bepalen, maar dan moeten we achreraf nog het gemiddeld verschil per jaar afleiden.
 
 ```{r}
 mixedmodel_periode <- lmer(
@@ -762,22 +868,4 @@ datatable(overzicht,
 
 
 
-# Verdere dataverkenning
-
-
-```{r}
-analyseset %>%
-  ggplot(aes(x = fPeriode, y = Carbon_t_ha, colour = observation_type, shape = observation_type)) +
-  stat_summary(fun.data = "mean_cl_boot", size = 0.5,  alpha = 0.5) +
-  facet_wrap(~Reeks)
-```
-
-```{r}
-analyseset %>%
-  ggplot(aes(x = observation_type, fill = fPeriode)) +
-  geom_bar(position = "dodge") +
-  facet_wrap(~Reeks) +
-  coord_flip()
-```
-```
 
