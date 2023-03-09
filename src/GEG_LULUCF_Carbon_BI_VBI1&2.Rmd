@@ -179,7 +179,7 @@ p1 <- My.WgtParEstimation(analyseset, VariableName = "Carbon_t_ha", Periode = 1)
 
 p2 <- My.WgtParEstimation(analyseset, VariableName = "Carbon_t_ha", Periode = 2)
 
-result_db <- rbind (p1, p2)
+result_db <- rbind(p1, p2)
 
 colnames(result_db) <- str_to_lower(colnames(result_db))
 ```
@@ -224,7 +224,7 @@ result_db_diff <- result_db %>%
 
 ## Betrouwbaarheidsinterval: 2 onafhankelijke steekproeven
 
-Als we twee onafhankelijke steekproeven veronderstellen (wat niet het geval is) kunnen we eenvoudig de standaard error berekenen op het verschil tussen de gemiddeldes per periode. Omdat we negeren dat een deel van de observaties gepaard zijn, krijgen we hierdoor echter een breder betrouwbaarheidsinterval (lagere precisie).  
+Als we twee onafhankelijke steekproeven veronderstellen (wat niet het geval is) kunnen we eenvoudig de standaardfout berekenen op het verschil tussen de gemiddeldes per periode. Omdat we negeren dat een deel van de observaties gepaard zijn, krijgen we hierdoor echter een breder betrouwbaarheidsinterval (lagere precisie).  
 
 $$\text{SE}_{{C}_2-{C}_1}= \sqrt{\text{SE}_{{C}_2}^2 + \text{SE}_{{C}_1}^2}$$
 Het aantal jaren tussen de inventarisaties berekenen we op twee manieren:
@@ -247,7 +247,7 @@ result_onafh <- result_db_diff %>%
 
 result_onafh %>% 
   datatable(rownames = FALSE,
-            caption = "Schatting jaarlijkse toename in C per ha en 95% betrouwbaarheidsinterval bij een verondetstelling dat beide steekproeven onafhankelijk zijn")
+            caption = "Schatting jaarlijkse toename in C per ha en 95% betrouwbaarheidsinterval bij een veronderstelling dat beide steekproeven onafhankelijk zijn")
 
 ```
 
@@ -277,10 +277,13 @@ carbon_periodes %>%
   geom_point(alpha = 0.2) +
   geom_smooth() +
   geom_abline(intercept = 0, slope = 1, linetype = 2) +
-  facet_wrap(~observation_type)
-
-
+  facet_wrap(~observation_type) +
+  labs(x = "Carbon (ton/ha) periode 1",
+       y = "Carbon (ton/ha) periode 2")
 ```
+
+N.B. de "repeated & unpaired" categorie omvat proefvlakken die in de tweede periode niet exact geherlokaliseerd konden worden.
+Deze categorie bevat ook de bosrand proefvlakken die in de eerste periode systematisch verschoven om volledig binnen bos te liggen, maar in de tweede periode niet verschoven werden (om geen vertekening te veroorzaken).
 
 ```{r}
 unpaired <- analyseset %>%
