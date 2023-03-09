@@ -334,7 +334,7 @@ results_paired <- paired_p1_p2 %>%
 ```
 
 + voor de niet-gepaarde metingen berekenen we het verschil in gemiddelde houtvoorraad periode en delen we die door het verschil in gemiddelde jaar waarin de opname is gebeurd.
-+ N.B. niet-gepaarde metingen zijn hier de combinatie van de categorieën "not repeated" en "repeated & unpaired". Dit is een strikte interpretatie van niet-gepaard, omdat de categorie "repeated & unpaired" in feite kan beschouwd worden als deels gepaard (de locatie is niet exact dezelfde waardoor het zeer waarschijnlijk gaat om metingen aan andere bomen, maar de locatie zal wel nabij gelegen zijn)
++ N.B. niet-gepaarde metingen zijn hier de combinatie van de categorieën "not repeated" en "repeated & unpaired". Dit is een strikte interpretatie van niet-gepaard, omdat de categorie "repeated & unpaired" in feite kan beschouwd worden als deels gepaard (de locatie is niet exact dezelfde waardoor het zeer waarschijnlijk gaat om metingen aan andere bomen, maar de locatie zal wel nabij gelegen zijn, waardoor we correlatie verwachten)
 
 
 ```{r}
@@ -392,15 +392,11 @@ results_unpaired_summary <- results_unpaired_wide %>%
 results_paired_summary %>%
   bind_rows(results_unpaired_summary) %>%
   datatable(rownames = FALSE)
-
-
-
-
 ```
 
 Vervolgens kunnen we gemiddelde nemen van de jaarlijkse toename voor de gepaarde en ongepaarde plots, gewogen volgens de som van de plotgewichten. 
 
-De standard error op dit gewogen gemiddelde berekenen we las volgt:
+De standaardfout op dit gewogen gemiddelde berekenen we als volgt:
 
 $$\text{SE}_{{C}_2-C_1}= \sqrt{w_{gepaard}^2\text{SE}_{({C}_2-C_1)_{gepaard}}^2 + w_{ongepaard}^2\text{SE}_{({C}_2-C_1)_{ongepaard}}^2}$$
 
@@ -447,13 +443,13 @@ results_wgt %>%
 
 ### Betrouwbaarheidsinterval afleiden uit aangepaste T-test voor deels overlappende steekproef
 
-Voor het betrouwbaarheidsinterval kunnen we ons ook baseren op de aangepaste T-test voor een deels overlappende steekproef [@Derrick2017]. Ze stellen een test-statistiek $T_{new2}$ voor met $n_1$ en $n_2$ de groottes van de steekproeven, $S_1^2$ en $S_2^2$ de steekproefvarianties van de steekproeven, $n_c$ het aantal gepaarde observaties en $r$ de correlatie tussen de geapaarde observaties:    
+Voor het betrouwbaarheidsinterval kunnen we ons ook baseren op de aangepaste T-test voor een deels overlappende steekproef [@Derrick2017]. Ze stellen een test-statistiek $T_{new2}$ voor met $n_1$ en $n_2$ de groottes van de steekproeven, $S_1^2$ en $S_2^2$ de steekproefvarianties van de steekproeven, $n_c$ het aantal gepaarde observaties en $r$ de correlatie tussen de gepaarde observaties:
 
 $$T_{new2}=\frac{\bar{X_1} - \bar{X_2}}{\sqrt{\frac{S_1^2}{n_1}+\frac{S_2^2}{n_2}-2r\frac{S_1S_2n_c}{n_1n_2}}}$$
 
 De noemer van de test-statistiek $T_{new2}$ komt overeen met de standaardfout en kan gebruikt worden om het betrouwbaarheisdsinterval af te leiden. 
 
-De functie Partover.test van het R-package Partiallyoverlapping maakt het mogelijk om de test-statistiek te berekenen en het betrouwbaarheidsinterval op het geschatte verschil. Maar, de functie laat het niet toe om gewichten te gebruiken. Onderstaande functies houden wel rekening met de gewichten.
+De functie `Partover.test` van het R-package `Partiallyoverlapping` maakt het mogelijk om de test-statistiek te berekenen en het betrouwbaarheidsinterval op het geschatte verschil. Maar, de functie laat het niet toe om gewichten te gebruiken. Onderstaande functies houden wel rekening met de gewichten.
 
 
 ```{r}
@@ -563,7 +559,7 @@ check <- tibble(function_used = c("Partover.test", "wgt.mean_diff_pos", "wgt.mea
 
 ```
 
-In onderstaande tabelzien we dat in het geval we geen gewichten gebruiken, de functie `Partover.test` quasi dezelfde uitkomst geeft als de functie wgt.mean_diff_pos. We zien ook het geschatte verschil kleiner is als we wel gewichten gebruiken. 
+In onderstaande tabel zien we dat in het geval we geen gewichten gebruiken, de functie `Partover.test` quasi dezelfde uitkomst geeft als de functie `wgt.mean_diff_pos`. We zien ook het geschatte verschil kleiner is als we wel gewichten gebruiken. 
 
 
 ```{r}
@@ -572,7 +568,7 @@ check %>%
             caption = "Vergelijking betrouwbaarheidsinterval op basis van de functie Partover.test en de functie wgt.mean_diff_pos")
 ```
 
-Om de verschil in C per jaar te bepalen moeten we bij deze methode opnieuw gebruik maken van de tijdsperiode tussen beide inventarisaties. Voor de gepaarde observaties is de tijdsperiode verschillend per plot en is het gebruik van eenzelfde tijdsperiode voor alle plots minder nauwkeurig.   
+Om de verschillen in C per jaar te bepalen moeten we bij deze methode opnieuw gebruik maken van de tijdsperiode tussen beide inventarisaties. Voor de gepaarde observaties is de tijdsperiode verschillend per plot en is het gebruik van eenzelfde tijdsperiode voor alle plots minder nauwkeurig.
 
 
 
@@ -681,7 +677,7 @@ mean_periode_compare <- mean_periode %>%
 analyseset %>%
   ggplot(aes(x = fPeriode, y = Carbon_t_ha, colour = observation_type, shape = observation_type)) +
   stat_summary(fun.data = "mean_cl_boot", size = 0.5,  alpha = 0.5) +
-  facet_wrap(~Reeks)
+  facet_wrap(~Reeks, labeller = label_both)
 ```
 
 + Verschil in gemiddeldes tussen observatie typen
@@ -692,7 +688,7 @@ analyseset %>%
 analyseset %>%
   ggplot(aes(x = observation_type, fill = fPeriode)) +
   geom_bar(position = "dodge") +
-  facet_wrap(~Reeks) +
+  facet_wrap(~Reeks, labeller = label_both) +
   coord_flip()
 ```
 
