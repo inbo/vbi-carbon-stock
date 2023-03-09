@@ -132,7 +132,8 @@ Deze analyseset (`tblLULUCF_analyseset_plot`) kan opgehaald worden uit de analys
 
 load(here::here("data/LULUCF_analyseset_plot.Rdata"))
 
-gepaardheid <- read_excel("../data/tblRepeatedMeasurement.xlsx")
+gepaardheid <- read_excel(here::here("data/tblRepeatedMeasurement.xlsx"),
+                          guess_max = 1e5)
 
 gepaardheid_1_2 <- gepaardheid %>%
   filter(timespan == "1_2") %>%
@@ -223,7 +224,7 @@ result_db_diff <- result_db %>%
 
 ## Betrouwbaarheidsinterval: 2 onafhankelijke steekproeven
 
-Als we twee onafhankelijke steekproeven veronderstellen (wat niet het geval is) kunnen we eeenvoudig de standaard error berekenen op het verschil tussen de gemiddeldes per periode. Omdat we negeren dat een deel van de observaties gepaard zijn, krijgen we hierdoor echter een breder betrouwbaarheidsinterval (lagere precisie).  
+Als we twee onafhankelijke steekproeven veronderstellen (wat niet het geval is) kunnen we eenvoudig de standaard error berekenen op het verschil tussen de gemiddeldes per periode. Omdat we negeren dat een deel van de observaties gepaard zijn, krijgen we hierdoor echter een breder betrouwbaarheidsinterval (lagere precisie).  
 
 $$\text{SE}_{{C}_2-{C}_1}= \sqrt{\text{SE}_{{C}_2}^2 + \text{SE}_{{C}_1}^2}$$
 Het aantal jaren tussen de inventarisaties berekenen we op twee manieren:
