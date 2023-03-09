@@ -814,9 +814,11 @@ summary(mixedmodel_year_obs)
 library(brms)
 mixedmodel_year_obs_plotid <- brm(
   formula = Carbon_t_ha | weights(Weight) ~ Year_scaled + (1 | gr(idplots, by = observation_type)) + (1 | fReeks),
-  data = analyseset)
+  data = analyseset, chains = 2, iter = 1000, family = brms::hurdle_gamma())
 summary(mixedmodel_year_obs_plotid)
-performance::icc(mixedmodel_year_obs_plotid, by_group = TRUE)
+brms::pp_check(mixedmodel_year_obs_plotid)
+plot(mixedmodel_year_obs_plotid)
+
 ```
 
 ## Periode als verklarende variabele
