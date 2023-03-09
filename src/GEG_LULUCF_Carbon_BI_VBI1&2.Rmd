@@ -808,6 +808,16 @@ summary(mixedmodel_year_obs)
 
 
 
+```{r icc-per-obstype, eval=FALSE}
+# model random intercept for plots separately for each observation type
+# don't known how to do it in lme4
+library(brms)
+mixedmodel_year_obs_plotid <- brm(
+  formula = Carbon_t_ha | weights(Weight) ~ Year_scaled + (1 | gr(idplots, by = observation_type)) + (1 | fReeks),
+  data = analyseset)
+summary(mixedmodel_year_obs_plotid)
+performance::icc(mixedmodel_year_obs_plotid, by_group = TRUE)
+```
 
 ## Periode als verklarende variabele
 
