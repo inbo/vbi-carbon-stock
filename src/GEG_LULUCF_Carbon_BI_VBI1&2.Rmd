@@ -334,6 +334,7 @@ results_paired <- paired_p1_p2 %>%
 ```
 
 + voor de niet-gepaarde metingen berekenen we het verschil in gemiddelde houtvoorraad periode en delen we die door het verschil in gemiddelde jaar waarin de opname is gebeurd.
++ N.B. niet-gepaarde metingen zijn hier de combinatie van de categorieën "not repeated" en "repeated & unpaired". Dit is een strikte interpretatie van niet-gepaard, omdat de categorie "repeated & unpaired" in feite kan beschouwd worden als deels gepaard (de locatie is niet exact dezelfde waardoor het zeer waarschijnlijk gaat om metingen aan andere bomen, maar de locatie zal wel nabij gelegen zijn)
 
 
 ```{r}
