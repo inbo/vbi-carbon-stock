@@ -252,7 +252,7 @@ result_onafh %>%
 ```
 
 
-## Betrouwbaarheidsinterval: deels gepaarde metingen
+## Betrouwbaarheidsinterval: (deels) gepaarde metingen
 
 ```{r}
 analyseset <- analyseset %>%
@@ -266,7 +266,22 @@ check <- analyseset %>%
   group_by(Periode, observation_type, n_periods) %>%
   summarise(n = n()) %>%
   ungroup()
+```
 
+
+```{r}
+analyseset %>%
+  select(idplots, observation_type, Periode, Carbon_t_ha) %>%
+  ggplot(aes(x = observation_type, y = Carbon_t_ha,
+             fill = factor(Periode))) +
+  geom_violin(alpha = 0.1) +
+  labs(y = "Koolstof (ton/ha)",
+       x = "",
+       fill = "Periode")
+```
+
+
+```{r}
 carbon_periodes <- analyseset %>%
   filter(observation_type %in% c("repeated & paired", "repeated & unpaired")) %>%
   select(idplots, observation_type, Periode, Carbon_t_ha) %>%
@@ -278,12 +293,15 @@ carbon_periodes %>%
   geom_smooth() +
   geom_abline(intercept = 0, slope = 1, linetype = 2) +
   facet_wrap(~observation_type) +
-  labs(x = "Carbon (ton/ha) periode 1",
-       y = "Carbon (ton/ha) periode 2")
+  labs(x = "Koolstof (ton/ha) periode 1",
+       y = "Koolstof (ton/ha) periode 2")
+
 ```
 
+
+
 N.B. de "repeated & unpaired" categorie omvat proefvlakken die in de tweede periode niet exact geherlokaliseerd konden worden.
-Deze categorie bevat ook de bosrand proefvlakken die in de eerste periode systematisch verschoven om volledig binnen bos te liggen, maar in de tweede periode niet verschoven werden (om geen vertekening te veroorzaken).
+Deze categorie bevat ook de bosrand proefvlakken die in de eerste periode systematisch verschoven werden om volledig binnen bos te liggen, maar in de tweede periode niet verschoven werden (om geen vertekening te veroorzaken).
 
 ```{r}
 unpaired <- analyseset %>%
