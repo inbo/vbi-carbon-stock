@@ -637,12 +637,12 @@ model_periode_noweight <- lm(
   data = analyseset)
 
 mixmodel_periode_weight <- lmer(
-  formula = Carbon_t_ha ~ fPeriode + (1|fPeriode),
+  formula = Carbon_t_ha ~ fPeriode + (1|idplots),
   data = analyseset,
   weights = Weight)
 
 mixmodel_periode_noweight <- lmer(
-  formula = Carbon_t_ha ~ fPeriode + (1|fPeriode),
+  formula = Carbon_t_ha ~ fPeriode + (1|idplots),
   data = analyseset)
 
 mean_periode <- analyseset %>%
