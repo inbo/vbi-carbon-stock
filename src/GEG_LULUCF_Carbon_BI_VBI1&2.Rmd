@@ -132,7 +132,8 @@ Deze analyseset (`tblLULUCF_analyseset_plot`) kan opgehaald worden uit de analys
 
 load(here::here("data/LULUCF_analyseset_plot.Rdata"))
 
-gepaardheid <- read_excel("../data/tblRepeatedMeasurement.xlsx")
+gepaardheid <- read_excel(here::here("data/tblRepeatedMeasurement.xlsx"),
+                          guess_max = 1e5)
 
 gepaardheid_1_2 <- gepaardheid %>%
   filter(timespan == "1_2") %>%
@@ -178,7 +179,7 @@ p1 <- My.WgtParEstimation(analyseset, VariableName = "Carbon_t_ha", Periode = 1)
 
 p2 <- My.WgtParEstimation(analyseset, VariableName = "Carbon_t_ha", Periode = 2)
 
-result_db <- rbind (p1, p2)
+result_db <- rbind(p1, p2)
 
 colnames(result_db) <- str_to_lower(colnames(result_db))
 ```
@@ -223,7 +224,7 @@ result_db_diff <- result_db %>%
 
 ## Betrouwbaarheidsinterval: 2 onafhankelijke steekproeven
 
-Als we twee onafhankelijke steekproeven veronderstellen (wat niet het geval is) kunnen we eeenvoudig de standaard error berekenen op het verschil tussen de gemiddeldes per periode. Omdat we negeren dat een deel van de observaties gepaard zijn, krijgen we hierdoor echter een breder betrouwbaarheidsinterval (lagere precisie).  
+Als we twee onafhankelijke steekproeven veronderstellen (wat niet het geval is) kunnen we eenvoudig de standaardfout berekenen op het verschil tussen de gemiddeldes per periode. Omdat we negeren dat een deel van de observaties gepaard zijn, krijgen we hierdoor echter een breder betrouwbaarheidsinterval (lagere precisie).  
 
 $$\text{SE}_{{C}_2-{C}_1}= \sqrt{\text{SE}_{{C}_2}^2 + \text{SE}_{{C}_1}^2}$$
 Het aantal jaren tussen de inventarisaties berekenen we op twee manieren:
@@ -246,12 +247,12 @@ result_onafh <- result_db_diff %>%
 
 result_onafh %>% 
   datatable(rownames = FALSE,
-            caption = "Schatting jaarlijkse toename in C per ha en 95% betrouwbaarheidsinterval bij een verondetstelling dat beide steekproeven onafhankelijk zijn")
+            caption = "Schatting jaarlijkse toename in C per ha en 95% betrouwbaarheidsinterval bij een veronderstelling dat beide steekproeven onafhankelijk zijn")
 
 ```
 
 
-## Betrouwbaarheidsinterval: deels gepaarde metingen
+## Betrouwbaarheidsinterval: (deels) gepaarde metingen
 
 ```{r}
 analyseset <- analyseset %>%
@@ -265,7 +266,22 @@ check <- analyseset %>%
   group_by(Periode, observation_type, n_periods) %>%
   summarise(n = n()) %>%
   ungroup()
+```
 
+
+```{r}
+analyseset %>%
+  select(idplots, observation_type, Periode, Carbon_t_ha) %>%
+  ggplot(aes(x = observation_type, y = Carbon_t_ha,
+             fill = factor(Periode))) +
+  geom_violin(alpha = 0.1) +
+  labs(y = "Koolstof (ton/ha)",
+       x = "",
+       fill = "Periode")
+```
+
+
+```{r}
 carbon_periodes <- analyseset %>%
   filter(observation_type %in% c("repeated & paired", "repeated & unpaired")) %>%
   select(idplots, observation_type, Periode, Carbon_t_ha) %>%
@@ -276,10 +292,16 @@ carbon_periodes %>%
   geom_point(alpha = 0.2) +
   geom_smooth() +
   geom_abline(intercept = 0, slope = 1, linetype = 2) +
-  facet_wrap(~observation_type)
-
+  facet_wrap(~observation_type) +
+  labs(x = "Koolstof (ton/ha) periode 1",
+       y = "Koolstof (ton/ha) periode 2")
 
 ```
+
+
+
+N.B. de "repeated & unpaired" categorie omvat proefvlakken die in de tweede periode niet exact geherlokaliseerd konden worden.
+Deze categorie bevat ook de bosrand proefvlakken die in de eerste periode systematisch verschoven werden om volledig binnen bos te liggen, maar in de tweede periode niet verschoven werden (om geen vertekening te veroorzaken).
 
 ```{r}
 unpaired <- analyseset %>%
@@ -312,6 +334,7 @@ results_paired <- paired_p1_p2 %>%
 ```
 
 + voor de niet-gepaarde metingen berekenen we het verschil in gemiddelde houtvoorraad periode en delen we die door het verschil in gemiddelde jaar waarin de opname is gebeurd.
++ N.B. niet-gepaarde metingen zijn hier de combinatie van de categorieën "not repeated" en "repeated & unpaired". Dit is een strikte interpretatie van niet-gepaard, omdat de categorie "repeated & unpaired" in feite kan beschouwd worden als deels gepaard (de locatie is niet exact dezelfde waardoor het zeer waarschijnlijk gaat om metingen aan andere bomen, maar de locatie zal wel nabij gelegen zijn, waardoor we correlatie verwachten)
 
 
 ```{r}
@@ -369,15 +392,11 @@ results_unpaired_summary <- results_unpaired_wide %>%
 results_paired_summary %>%
   bind_rows(results_unpaired_summary) %>%
   datatable(rownames = FALSE)
-
-
-
-
 ```
 
 Vervolgens kunnen we gemiddelde nemen van de jaarlijkse toename voor de gepaarde en ongepaarde plots, gewogen volgens de som van de plotgewichten. 
 
-De standard error op dit gewogen gemiddelde berekenen we las volgt:
+De standaardfout op dit gewogen gemiddelde berekenen we als volgt:
 
 $$\text{SE}_{{C}_2-C_1}= \sqrt{w_{gepaard}^2\text{SE}_{({C}_2-C_1)_{gepaard}}^2 + w_{ongepaard}^2\text{SE}_{({C}_2-C_1)_{ongepaard}}^2}$$
 
@@ -424,13 +443,13 @@ results_wgt %>%
 
 ### Betrouwbaarheidsinterval afleiden uit aangepaste T-test voor deels overlappende steekproef
 
-Voor het betrouwbaarheidsinterval kunnen we ons ook baseren op de aangepaste T-test voor een deels overlappende steekproef [@Derrick2017]. Ze stellen een test-statistiek $T_{new2}$ voor met $n_1$ en $n_2$ de groottes van de steekproeven, $S_1^2$ en $S_2^2$ de steekproefvarianties van de steekproeven, $n_c$ het aantal gepaarde observaties en $r$ de correlatie tussen de geapaarde observaties:    
+Voor het betrouwbaarheidsinterval kunnen we ons ook baseren op de aangepaste T-test voor een deels overlappende steekproef [@Derrick2017]. Ze stellen een test-statistiek $T_{new2}$ voor met $n_1$ en $n_2$ de groottes van de steekproeven, $S_1^2$ en $S_2^2$ de steekproefvarianties van de steekproeven, $n_c$ het aantal gepaarde observaties en $r$ de correlatie tussen de gepaarde observaties:
 
 $$T_{new2}=\frac{\bar{X_1} - \bar{X_2}}{\sqrt{\frac{S_1^2}{n_1}+\frac{S_2^2}{n_2}-2r\frac{S_1S_2n_c}{n_1n_2}}}$$
 
 De noemer van de test-statistiek $T_{new2}$ komt overeen met de standaardfout en kan gebruikt worden om het betrouwbaarheisdsinterval af te leiden. 
 
-De functie Partover.test van het R-package Partiallyoverlapping maakt het mogelijk om de test-statistiek te berekenen en het betrouwbaarheidsinterval op het geschatte verschil. Maar, de functie laat het niet toe om gewichten te gebruiken. Onderstaande functies houden wel rekening met de gewichten.
+De functie `Partover.test` van het R-package `Partiallyoverlapping` maakt het mogelijk om de test-statistiek te berekenen en het betrouwbaarheidsinterval op het geschatte verschil. Maar, de functie laat het niet toe om gewichten te gebruiken. Onderstaande functies houden wel rekening met de gewichten.
 
 
 ```{r}
@@ -540,7 +559,7 @@ check <- tibble(function_used = c("Partover.test", "wgt.mean_diff_pos", "wgt.mea
 
 ```
 
-In onderstaande tabelzien we dat in het geval we geen gewichten gebruiken, de functie `Partover.test` quasi dezelfde uitkomst geeft als de functie wgt.mean_diff_pos. We zien ook het geschatte verschil kleiner is als we wel gewichten gebruiken. 
+In onderstaande tabel zien we dat in het geval we geen gewichten gebruiken, de functie `Partover.test` quasi dezelfde uitkomst geeft als de functie `wgt.mean_diff_pos`. We zien ook het geschatte verschil kleiner is als we wel gewichten gebruiken. 
 
 
 ```{r}
@@ -549,7 +568,7 @@ check %>%
             caption = "Vergelijking betrouwbaarheidsinterval op basis van de functie Partover.test en de functie wgt.mean_diff_pos")
 ```
 
-Om de verschil in C per jaar te bepalen moeten we bij deze methode opnieuw gebruik maken van de tijdsperiode tussen beide inventarisaties. Voor de gepaarde observaties is de tijdsperiode verschillend per plot en is het gebruik van eenzelfde tijdsperiode voor alle plots minder nauwkeurig.   
+Om de verschillen in C per jaar te bepalen moeten we bij deze methode opnieuw gebruik maken van de tijdsperiode tussen beide inventarisaties. Voor de gepaarde observaties is de tijdsperiode verschillend per plot en is het gebruik van eenzelfde tijdsperiode voor alle plots minder nauwkeurig.
 
 
 
@@ -618,12 +637,12 @@ model_periode_noweight <- lm(
   data = analyseset)
 
 mixmodel_periode_weight <- lmer(
-  formula = Carbon_t_ha ~ fPeriode + (1|fPeriode),
+  formula = Carbon_t_ha ~ fPeriode + (1|idplots),
   data = analyseset,
   weights = Weight)
 
 mixmodel_periode_noweight <- lmer(
-  formula = Carbon_t_ha ~ fPeriode + (1|fPeriode),
+  formula = Carbon_t_ha ~ fPeriode + (1|idplots),
   data = analyseset)
 
 mean_periode <- analyseset %>%
@@ -658,7 +677,7 @@ mean_periode_compare <- mean_periode %>%
 analyseset %>%
   ggplot(aes(x = fPeriode, y = Carbon_t_ha, colour = observation_type, shape = observation_type)) +
   stat_summary(fun.data = "mean_cl_boot", size = 0.5,  alpha = 0.5) +
-  facet_wrap(~Reeks)
+  facet_wrap(~Reeks, labeller = label_both)
 ```
 
 + Verschil in gemiddeldes tussen observatie typen
@@ -669,7 +688,7 @@ analyseset %>%
 analyseset %>%
   ggplot(aes(x = observation_type, fill = fPeriode)) +
   geom_bar(position = "dodge") +
-  facet_wrap(~Reeks) +
+  facet_wrap(~Reeks, labeller = label_both) +
   coord_flip()
 ```
 
@@ -789,6 +808,18 @@ summary(mixedmodel_year_obs)
 
 
 
+```{r icc-per-obstype, eval=FALSE}
+# model random intercept for plots separately for each observation type
+# don't known how to do it in lme4
+library(brms)
+mixedmodel_year_obs_plotid <- brm(
+  formula = Carbon_t_ha | weights(Weight) ~ Year_scaled + (1 | gr(idplots, by = observation_type)) + (1 | fReeks),
+  data = analyseset, chains = 2, iter = 1000, family = brms::hurdle_gamma())
+summary(mixedmodel_year_obs_plotid)
+brms::pp_check(mixedmodel_year_obs_plotid)
+plot(mixedmodel_year_obs_plotid)
+
+```
 
 ## Periode als verklarende variabele
 
