@@ -132,6 +132,21 @@ Deze analyseset (`tblLULUCF_analyseset_plot`) kan opgehaald worden uit de analys
 
 load(here::here("data/LULUCF_analyseset_plot.Rdata"))
 
+```
+
+Daarnaast gebruiken we ook gegevens over de gepaardheid van de herhaalde metingen (`tblRepeatedMeasurement.xlsx`). 
+Voor een deel van de meetpunten kon het proefvlak voor de dendrometrische gegevensinzameling uit de vorige inventarisatie ronde geherlokaliseerd worden. 
+Voor een ander deel was het niet mogelijk om het proefvlak terug te vinden en werd er een nieuw proefvlak afgebakend op het grid van de bosinventarisatie.
+
+Volgende situaties kunnen zich dus voordoen:
+
++ niet herhaalde meetpunten (enkel opgemeten in één van de inventarisatieperiodes)
++ herhaalde meetpunten en herlokalisatie van proefvlak
++ herhaalde meetpunten maar geen herlokalosatie van proefvlak
+
+Het veld `rm_dendro`geeft per meetpunt aan of het proefvlak kon teruggevonden worden.  
+
+```{r}
 gepaardheid <- read_excel(here::here("data/tblRepeatedMeasurement.xlsx"),
                           guess_max = 1e5)
 
@@ -140,8 +155,121 @@ gepaardheid_1_2 <- gepaardheid %>%
   select(idplots, rm_dendro) %>%
   mutate(rm_dendro = as.logical(rm_dendro))
 
+gepaardheid_2_3 <- gepaardheid %>%
+  filter(timespan == "2_3") %>%
+  select(idplots, rm_dendro) %>%
+  mutate(rm_dendro = as.logical(rm_dendro))
+
 check <- n_distinct(gepaardheid_1_2$idplots) == nrow(gepaardheid_1_2)
 ```
+
+
+# Aanmaak analyseset
+
+We maken gebruik van een analyseset met de koolstofvoorraad (ton/ha) per meetpunt voor de eerste en tweede inventarisatieperiode (`analyseset_1_2`).
+
+Daarnaast beschikken we ook al over gegevens van de derde inventarisatieperiode. Van deze derde inventaristieperiode werden al de eerste drie reeksen van meetpunten afgewerkt. Om een vergelijking mogelijk te maken tussen de tweede en derde inventarisatieperiode maken we gebruik van een analyseset die enkel de meetpunten van reeks 1 tot 3 bevatten voor beide periodes (`analyseset_2_3`).  
+
+```{r }
+
+analyseset_1_2_3 <- analyseset_plot %>% 
+   select(idplots = IDPlots, Periode, Weight, Year, Reeks, Carbon_t_ha, idgroup) 
+
+analyseset_1_2 <- analyseset_plot %>% 
+  filter(Periode %in% c(1,2)) %>%
+  select(idplots = IDPlots, Periode, Weight, Year, Reeks, Carbon_t_ha, idgroup) %>%
+  group_by(idplots) %>%
+  mutate(n_periods = n_distinct(Periode)) %>%
+  ungroup() %>%
+  left_join(gepaardheid_1_2, by = "idplots") %>%
+  mutate(observation_type = ifelse(is.na(rm_dendro) | n_periods == 1, "niet herhaald",
+                                     ifelse(rm_dendro, "herhaald en zelfde proefvlak", "herhaald en nieuw proefvlak"))) %>%
+  mutate(name_analyseset = "analyseset_1_2")
+
+analyseset_2_3 <- analyseset_plot %>% 
+  filter(Periode %in% c(2,3)) %>%
+  filter(Reeks <= 3) %>%
+  select(idplots = IDPlots, Periode, Weight, Year, Reeks, Carbon_t_ha, idgroup) %>%
+  group_by(idplots) %>%
+  mutate(n_periods = n_distinct(Periode)) %>%
+  ungroup() %>%
+  left_join(gepaardheid_2_3, by = "idplots") %>%
+  mutate(observation_type = ifelse(is.na(rm_dendro) | n_periods == 1, "niet herhaald",
+                                     ifelse(rm_dendro, "herhaald en zelfde proefvlak", "herhaald en nieuw proefvlak")))  %>%
+  mutate(name_analyseset = "analyseset_2_3")
+
+analyseset_combined <- analyseset_1_2 %>%
+  bind_rows(analyseset_2_3)
+
+```
+
+
+# Dataverkenning
+
+## Meetproces
+
+Uit onderstaande figuur blijkt duidelijk dat er tussen periode 2 en periode 3 en veel groter aandeel van de proefvlakken konn geherlokaliseerd worden dan tussen periode 1 en 2.  
+
+```{r}
+analyseset_combined %>%
+  mutate(Periode = factor(Periode)) %>%
+  ggplot(aes(x = observation_type, fill = Periode)) +
+  geom_bar(position = "dodge") +
+  facet_wrap(~name_analyseset) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 90))
+```
+
+
+
+## Correlatie tussen herhaalde meetpunten
+
+```{r}
+carbon_periodes <- analyseset_combined %>%
+  filter(observation_type %in% c("herhaald en nieuw proefvlak", "herhaald en zelfde proefvlak")) %>%
+  mutate(periode_rel = ifelse(name_analyseset == "analyseset_2_3", Periode - 1, Periode)) %>%
+  select(name_analyseset, idplots, observation_type, periode_rel, Carbon_t_ha, Year) %>%
+  pivot_wider(names_from = "periode_rel", values_from = c("Carbon_t_ha", "Year"))
+
+
+carbon_periodes %>%
+  ggplot(aes(x = Carbon_t_ha_1, y = Carbon_t_ha_2)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth() +
+  geom_abline(intercept = 0, slope = 1, linetype = 2) +
+  facet_grid(name_analyseset~observation_type) +
+  labs(x = "Koolstof (ton/ha) periode t",
+       y = "Koolstof (ton/ha) periode t + 1")
+
+```
+
+```{r}
+carbon_periodes %>%
+  group_by(name_analyseset, observation_type) %>%
+  summarise(correlatie = round(cor(Carbon_t_ha_1, Carbon_t_ha_2), 2)) %>%
+  ungroup() %>%
+  kable() %>%
+  kable_styling() %>%
+  collapse_rows(1)
+```
+
+## Distributie verschil in koolstofvoorrad per plot
+
+```{r}
+carbon_periodes %>%
+  mutate(verschil_jaar = (Carbon_t_ha_2 - Carbon_t_ha_1) / (Year_2 - Year_1)) %>%
+  ggplot(aes(x = verschil_jaar, fill = observation_type)) +
+  geom_density(alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = 2) +
+  facet_wrap(~name_analyseset) +
+  labs(x = "Verschil per jaar in koolstofvoorrad (ton/ha)") +
+  theme(legend.position = "bottom")
+  
+```
+
+
+
+# Design-based analyse
 
 
 ```{r}
@@ -155,31 +283,19 @@ show_ci <- function(mean, llci, ulci, digits = 2){
 ```
 
 
-# Aanmaak analyseset
-
-```{r KiesPeriode1&2}
-analyseset <- analyseset_plot %>% 
-   filter(Periode %in% c(1,2)) %>%
-   select(idplots = IDPlots, Periode, Weight, Year, Reeks, Carbon_t_ha, idgroup) %>%
-  left_join(gepaardheid_1_2, by = "idplots")
-
-duur_periode <- analyseset_plot %>%
-  group_by(Periode) %>%
-  summarise(mean_year = mean(Year)) %>%
-  ungroup()
-```
-
-# Design-based analyse
-
 ## C/ha per periode
 
 ```{r statistics_per_periode, results = 'hide'}
 
-p1 <- My.WgtParEstimation(analyseset, VariableName = "Carbon_t_ha", Periode = 1)
+p1 <- My.WgtParEstimation(analyseset_1_2_3, VariableName = "Carbon_t_ha", Periode = 1)
 
-p2 <- My.WgtParEstimation(analyseset, VariableName = "Carbon_t_ha", Periode = 2)
+p2 <- My.WgtParEstimation(analyseset_1_2_3, VariableName = "Carbon_t_ha", Periode = 2)
 
-result_db <- rbind(p1, p2)
+p2_maxreeks3 <- My.WgtParEstimation(analyseset_1_2_3, VariableName = "Carbon_t_ha", Periode = 2, MaxReeks = 3)
+
+p3 <- My.WgtParEstimation(analyseset_1_2_3, VariableName = "Carbon_t_ha", Periode = 3)
+
+result_db <- rbind(p1, p2, p2_maxreeks3, p3)
 
 colnames(result_db) <- str_to_lower(colnames(result_db))
 ```
@@ -190,12 +306,12 @@ colnames(result_db) <- str_to_lower(colnames(result_db))
 # van long naar wide
 # dan aftrekken en delen door 16, 14.2,.. ...10
 
-n_years_mean <- mean((analyseset %>%
-       filter(Periode == 2))$Year) -
-  mean((analyseset %>%
-       filter(Periode == 1))$Year)
+# n_years_mean <- mean((analyseset_1_2 %>%
+#        filter(Periode == 2))$Year) -
+#   mean((analyseset_1_2 %>%
+#        filter(Periode == 1))$Year)
 
-periode_jaar <- analyseset %>%
+periode_jaar_1_2 <- analyseset_1_2 %>%
   group_by(Periode) %>%
   summarise(year_mean = mean(Year),
             year_middle = (max(Year) - min(Year))/2 + min(Year)) %>%
@@ -205,10 +321,10 @@ periode_jaar <- analyseset %>%
   mutate(diff_n_years = periode_2 - periode_1)
 
 
-result_db_diff <- result_db %>%
+result_db_diff_1_2 <- rbind(p1, p2) %>%
   select(variabele, periode, mean = wgt.mean, se, llci, ulci) %>%
   pivot_wider(names_from = "periode", values_from = c("mean", "se", "llci", "ulci")) %>%
-  bind_cols(periode_jaar) %>%
+  bind_cols(periode_jaar_1_2) %>%
   mutate(
     verschil = mean_2 - mean_1,
     verschil_se = sqrt(se_1^2 + se_2^2),
@@ -259,26 +375,20 @@ analyseset <- analyseset %>%
   group_by(idplots) %>%
   mutate(n_periods = n_distinct(Periode)) %>%
   ungroup() %>%
-  mutate(observation_type = ifelse(is.na(rm_dendro) | n_periods == 1, "not repeated",
-                                   ifelse(rm_dendro, "repeated & paired", "repeated & unpaired")))
 
 check <- analyseset %>%
   group_by(Periode, observation_type, n_periods) %>%
   summarise(n = n()) %>%
   ungroup()
 ```
-
-
 ```{r}
 analyseset %>%
-  select(idplots, observation_type, Periode, Carbon_t_ha) %>%
-  ggplot(aes(x = observation_type, y = Carbon_t_ha,
-             fill = factor(Periode))) +
-  geom_violin(alpha = 0.1) +
-  labs(y = "Koolstof (ton/ha)",
-       x = "",
-       fill = "Periode")
+  ggplot(aes(x = observation_type, fill = factor(Periode))) +
+  geom_bar()
 ```
+
+
+
 
 
 ```{r}
@@ -308,8 +418,8 @@ unpaired <- analyseset %>%
   filter(observation_type %in% c("not repeated", "repeated & unpaired"))
 
 paired_p1_p2 <- analyseset %>%
-  filter(observation_type == "repeated & paired") %>%
-  select(idplots, Year, Weight, Periode, Carbon_t_ha) %>%
+  filter(observation_type %in% c("repeated & paired", "repeated & unpaired")) %>%
+  select(observation_type, idplots, Year, Weight, Periode, Carbon_t_ha) %>%
   pivot_wider(names_from = "Periode", values_from = c("Year", "Weight", "Carbon_t_ha")) %>%
   mutate(n_years = Year_2 - Year_1,
          carbon_t_ha_diff_total = Carbon_t_ha_2 - Carbon_t_ha_1,
@@ -320,17 +430,30 @@ mean_carbon_paired <- mean(paired_p1_p2$carbon_t_ha_diff_year)
 ```
 
 
+```{r}
+paired_p1_p2 %>%
+  ggplot(aes(x = carbon_t_ha_diff_year, fill = observation_type)) +
+  geom_density(alpha = 0.5) +
+  geom_vline(xintercept = 0, linetype = 2)
+```
+
 ### Aparte schatting gepaarde en niet-gepaarde plots
 
 + Voor de gepaarde metingen kunnen we op plotniveau de toename in C per ha per jaar bepalen. Dit is correcter gezien de periode tussen de herhaalde metingen varieert van plot tot plot. 
 
 ```{r}
 results_paired <- paired_p1_p2 %>%
+  filter(observation_type ==  "repeated & paired") %>%
   mutate(Weight = Weight_2,
          Year = Year_2,
          Reeks = 1) %>%
   My.WgtParEstimation(VariableName =  c("carbon_t_ha_diff_year", "carbon_t_ha_diff_total"))
 
+results_repeated <- paired_p1_p2 %>%
+  mutate(Weight = Weight_2,
+         Year = Year_2,
+         Reeks = 1) %>%
+  My.WgtParEstimation(VariableName =  c("carbon_t_ha_diff_year", "carbon_t_ha_diff_total"))
 ```
 
 + voor de niet-gepaarde metingen berekenen we het verschil in gemiddelde houtvoorraad periode en delen we die door het verschil in gemiddelde jaar waarin de opname is gebeurd.
